@@ -54,4 +54,29 @@ INSERT INTO agent_profiles (
     TRUE
 ) ON CONFLICT (agent_id) DO NOTHING; -- Avoid error if script is run multiple times
 
+-- Seed data for the Innovation Pulse Agent
+INSERT INTO agent_profiles (
+    agent_id,
+    name,
+    description,
+    frequency_profile,
+    keywords,
+    invocation_url,
+    is_active
+) VALUES (
+    'innovation_pulse_v1_001',
+    'Innovation Pulse Agent',
+    'Generates creative ideas, brainstorms solutions, and offers novel perspectives using an LLM.',
+    '{
+        "innovation": 0.95,
+        "clarity": 0.55,
+        "trust": 0.5,
+        "sovereignty": 0.6,
+        "empathy": 0.2,
+        "urgency": 0.1
+    }',
+    ARRAY['suggest', 'idea', 'ideas', 'brainstorm', 'what if', 'creative', 'novel', 'alternative'],
+    'innovation_agent_v1', -- This will be its Supabase function name
+    TRUE
+) ON CONFLICT (agent_id) DO NOTHING;
 ```
