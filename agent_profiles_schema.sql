@@ -113,4 +113,49 @@ INSERT INTO agent_profiles (
     is_active = EXCLUDED.is_active,
     updated_at = now(), -- Update timestamp on conflict
     current_affinity_scores = EXCLUDED.current_affinity_scores;
+
+-- Seed data for the SA Service Delivery Agent
+INSERT INTO agent_profiles (
+    agent_id,
+    name,
+    description,
+    frequency_profile,
+    keywords,
+    invocation_url,
+    is_active,
+    current_affinity_scores,
+    updated_at -- Explicitly listing updated_at for clarity, though DEFAULT now() handles it on insert
+) VALUES (
+    'sa_service_agent_v1',
+    'SA Service Delivery Agent',
+    'Presents and facilitates payment for BOQ Assistance and Website Design services for the South African market.',
+    '{
+        "clarity": 0.9,
+        "trust": 0.8,
+        "innovation": 0.2,
+        "sovereignty": 0.6,
+        "empathy": 0.5,
+        "urgency": 0.5
+    }',
+    ARRAY['sa services', 'south africa services', 'boq', 'bill of quantities', 'tender assist', 'website design', 'web design', 'get website', 'offer', 'pricing', 'cost', 'pay', 'ozow'],
+    'sa_service_agent_v1',
+    TRUE,
+    '{
+        "clarity": 0.9,
+        "trust": 0.8,
+        "innovation": 0.2,
+        "sovereignty": 0.6,
+        "empathy": 0.5,
+        "urgency": 0.5
+    }',
+    now()
+) ON CONFLICT (agent_id) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    frequency_profile = EXCLUDED.frequency_profile,
+    keywords = EXCLUDED.keywords,
+    invocation_url = EXCLUDED.invocation_url,
+    is_active = EXCLUDED.is_active,
+    current_affinity_scores = EXCLUDED.current_affinity_scores,
+    updated_at = now();
 ```

@@ -4,7 +4,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log(`MCP Node function booting up... v7 (Phase 5 TMG logging)`);
+console.log(`MCP Node function booting up... v8 (SA Service Agent routing)`);
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -35,46 +35,29 @@ async function getAgentProfiles(supabase: SupabaseClient | null): Promise<Record
 
 interface InputSignal { /* ... same ... */
   inputText: string;
-  desiredFrequency?: { clarity?: number; innovation?: number; [key: string]: number | undefined; };
+  desiredFrequency?: { clarity?: number; innovation?: number; trust?: number; [key: string]: number | undefined; }; // Added trust
   sessionId?: string;
   source?: string;
 }
 interface RawAgentResponse { /* ... same ... */
-    status: string;
-    agent_id: string;
-    response_text: string;
-    confidence_score: number;
-    kb_article_slug?: string | null;
-    pre_filter_response?: string | null;
-    pre_filter_confidence?: number | null;
-    llm_metadata?: any;
+    status: string; agent_id: string; response_text: string; confidence_score: number;
+    kb_article_slug?: string | null; pre_filter_response?: string | null;
+    pre_filter_confidence?: number | null; llm_metadata?: any;
 }
 interface FinalAgentResponseDetails { /* ... same ... */
-    status: string;
-    agent_id: string;
-    response_text: string;
-    confidence_score: number;
-    kb_article_slug?: string | null;
-    pre_filter_response?: string | null;
-    pre_filter_confidence?: number | null;
-    filter_alignment_score?: number | null;
-    filter_warnings?: string[] | null;
-    filter_value_alignment_details?: { [key: string]: number } | null; // Added
+    status: string; agent_id: string; response_text: string; confidence_score: number;
+    kb_article_slug?: string | null; pre_filter_response?: string | null;
+    pre_filter_confidence?: number | null; filter_alignment_score?: number | null;
+    filter_warnings?: string[] | null; filter_value_alignment_details?: { [key: string]: number } | null;
     llm_metadata?: any;
 }
 interface McpResponse { /* ... same ... */
-    status: string;
-    interaction_id?: string;
-    reason?: string;
-    resolution?: string;
-    agent_id?: string;
-    agent_response?: FinalAgentResponseDetails | null;
+    status: string; interaction_id?: string; reason?: string; resolution?: string;
+    agent_id?: string; agent_response?: FinalAgentResponseDetails | null;
 }
 interface ResonatorFilterResponse { /* ... same ... */
-  filtered_text: string;
-  alignment_score: number;
-  warnings: string[];
-  value_alignment: { trust: number; innovation: number; sovereignty: number; [key: string]: number; }; // Ensure this is part of the interface
+  filtered_text: string; alignment_score: number; warnings: string[];
+  value_alignment: { trust: number; innovation: number; sovereignty: number; [key: string]: number; };
 }
 
 async function logInteraction(supabase: SupabaseClient | null, logData: any): Promise<string | null> { /* ... same ... */
@@ -83,7 +66,6 @@ async function logInteraction(supabase: SupabaseClient | null, logData: any): Pr
         if (logData.agent_confidence_score) logData.agent_confidence_score = parseFloat(logData.agent_confidence_score);
         if (logData.pre_filter_confidence) logData.pre_filter_confidence = parseFloat(logData.pre_filter_confidence);
         if (logData.filter_alignment_score) logData.filter_alignment_score = parseFloat(logData.filter_alignment_score);
-
         const { data, error } = await supabase.from('interaction_log').insert([logData]).select('id').single();
         if (error) { console.error('MCP: Error logging interaction:', error); return null; }
         console.log('MCP: Interaction logged successfully.');
@@ -101,7 +83,7 @@ serve(async (req: Request) => {
   let inputText = "";
   let sessionId: string | undefined;
   let source: string | undefined;
-  let desiredFrequency_from_input: any = null; // To store for logging
+  let desiredFrequency_from_input: any = null;
   let routedAgentId: string | null = null;
   let finalAgentResponseDetails: FinalAgentResponseDetails | null = null;
 
@@ -114,43 +96,68 @@ serve(async (req: Request) => {
     inputText = requestBody.inputText;
     sessionId = requestBody.sessionId;
     source = requestBody.source || (req.headers.get('user-agent')?.includes('Mozilla') ? 'prototype_ui' : 'api_call');
-    desiredFrequency_from_input = requestBody.desiredFrequency; // Capture for logging
+    desiredFrequency_from_input = requestBody.desiredFrequency;
 
-    console.log('MCP Node (TMG logging) received input:', { inputText, desiredFrequency_from_input });
+    console.log('MCP Node (SA Agent routing) received input:', { inputText });
 
     // Dissonance Detection ( ... same ... )
     if (!inputText || inputText.trim().split(/\s+/).length < 3) {
       log_mcp_status = "dissonance_detected"; log_mcp_reason = "Input too short";
       mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Please provide more details." };
     } else {
-      const negativeKeywords = ["useless", "broken", "stupid", "fail"];
+      const negativeKeywords = ["useless", "broken", "stupid", "fail"]; // Could be from config
       if (negativeKeywords.some(keyword => inputText.toLowerCase().includes(keyword))) {
         log_mcp_status = "dissonance_detected"; log_mcp_reason = "Potential negative sentiment";
         mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Could you please rephrase or provide more context?" };
       } else {
-        // Agent Routing Logic ( ... same ... )
+        // Agent Routing Logic
         let targetAgentProfile: any = null;
+        const inputTextLower = inputText.toLowerCase();
+
+        const saServiceAgentProfile = AGENT_PROFILES["sa_service_agent_v1"];
         const innovationAgentProfile = AGENT_PROFILES["innovation_pulse_v1_001"];
         const clarityAgentProfile = AGENT_PROFILES["clarity_pulse_v1_001"];
-        if (innovationAgentProfile) {
+
+        // Priority 1: SA Service Agent for specific service keywords
+        if (saServiceAgentProfile) {
+            const serviceKeywords = saServiceAgentProfile.keywords || [];
+            if (serviceKeywords.some((kw:string) => inputTextLower.includes(kw))) {
+                targetAgentProfile = saServiceAgentProfile;
+                console.log("MCP: Routing to SA Service Agent");
+            }
+        }
+
+        // Priority 2: Innovation Agent if not service-related and innovation is desired/keywords match
+        if (!targetAgentProfile && innovationAgentProfile) {
             const innovationKeywords = innovationAgentProfile.keywords || [];
             const wantsInnovation = (desiredFrequency_from_input?.innovation && desiredFrequency_from_input.innovation > 0.7) ||
-                                   innovationKeywords.some((kw:string) => inputText.toLowerCase().includes(kw));
-            if (wantsInnovation) targetAgentProfile = innovationAgentProfile;
+                                   innovationKeywords.some((kw:string) => inputTextLower.includes(kw));
+            if (wantsInnovation) {
+                targetAgentProfile = innovationAgentProfile;
+                console.log("MCP: Routing to Innovation Agent");
+            }
         }
+
+        // Priority 3: Clarity Agent if no other specific agent matched and clarity is desired/keywords match
+        // This can also act as a general fallback if no other specific intent is matched.
         if (!targetAgentProfile && clarityAgentProfile) {
             const clarityKeywords = clarityAgentProfile.keywords || [];
-            const wantsClarity = (desiredFrequency_from_input?.clarity && desiredFrequency_from_input.clarity > 0.7) ||
-                                 clarityKeywords.some((kw:string) => inputText.toLowerCase().includes(kw));
-            if (wantsClarity) targetAgentProfile = clarityAgentProfile;
+            // Looser condition for clarity if no other agent matched, or specific desire for clarity
+            const wantsClarity = (desiredFrequency_from_input?.clarity && desiredFrequency_from_input.clarity > 0.5) || // Lowered threshold for general fallback
+                                 clarityKeywords.some((kw:string) => inputTextLower.includes(kw));
+            if (wantsClarity || !targetAgentProfile) { // If still no target, default to clarity if keywords match or as a last resort.
+                 targetAgentProfile = clarityAgentProfile;
+                 console.log("MCP: Routing to Clarity Agent (or default)");
+            }
         }
-        // ( ... rest of routing logic up to agent call ... )
+
+        // ( ... rest of MCP logic: agent invocation, filter orchestration, logging ... remains largely the same ... )
         if (targetAgentProfile) {
           routedAgentId = targetAgentProfile.agent_id;
           const transformedInputForAgent = { originalText: inputText, desiredFrequency: desiredFrequency_from_input, sessionId, source };
           const invocationUrlFromProfile = targetAgentProfile.invocation_url;
 
-          if (!invocationUrlFromProfile || !supabaseUrl) { /* ... error handling ... */
+          if (!invocationUrlFromProfile || !supabaseUrl) {
             log_mcp_status = "routing_error";
             log_mcp_reason = !invocationUrlFromProfile ? `Agent ${routedAgentId} profile missing invocation_url.` : `MCP misconfig: SUPABASE_URL not set.`;
             mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
@@ -158,91 +165,65 @@ serve(async (req: Request) => {
             const fullAgentUrl = `${supabaseUrl}/functions/v1/${invocationUrlFromProfile}`;
             let agentRawResponse: RawAgentResponse | null = null;
             try {
-              const agentCall = await fetch(fullAgentUrl, { /* ... */
-                method: 'POST',
-                headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` },
-                body: JSON.stringify(transformedInputForAgent)
-              });
+              const agentCall = await fetch(fullAgentUrl, { method: 'POST', headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` }, body: JSON.stringify(transformedInputForAgent) });
               if (!agentCall.ok) throw new Error(`Agent ${routedAgentId} call failed: ${agentCall.status} ${await agentCall.text()}`);
               agentRawResponse = await agentCall.json() as RawAgentResponse;
 
               finalAgentResponseDetails = {
                 status: agentRawResponse.status, agent_id: agentRawResponse.agent_id,
-                response_text: agentRawResponse.response_text,
-                confidence_score: agentRawResponse.confidence_score,
+                response_text: agentRawResponse.response_text, confidence_score: agentRawResponse.confidence_score,
                 kb_article_slug: agentRawResponse.kb_article_slug,
                 pre_filter_response: agentRawResponse.pre_filter_response || agentRawResponse.response_text,
                 pre_filter_confidence: agentRawResponse.pre_filter_confidence || agentRawResponse.confidence_score,
                 llm_metadata: agentRawResponse.llm_metadata,
-                filter_alignment_score: null, filter_warnings: [], filter_value_alignment_details: null // Initialize filter fields
+                filter_alignment_score: null, filter_warnings: [], filter_value_alignment_details: null
               };
 
               if (resonatorFilterUrl && finalAgentResponseDetails) {
-                console.log(`MCP: Calling Resonator Filter for agent ${routedAgentId}.`);
                 try {
-                  const filterCallBody = {
-                      text_content: finalAgentResponseDetails.pre_filter_response,
-                      source_agent_id: routedAgentId,
-                      target_frequency_profile: targetAgentProfile.frequency_profile
-                  };
-                  const filterCall = await fetch(resonatorFilterUrl, {
-                    method: 'POST',
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`},
-                    body: JSON.stringify(filterCallBody)
-                  });
+                  const filterCallBody = { text_content: finalAgentResponseDetails.pre_filter_response, source_agent_id: routedAgentId, target_frequency_profile: targetAgentProfile.frequency_profile };
+                  const filterCall = await fetch(resonatorFilterUrl, { method: 'POST', headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`}, body: JSON.stringify(filterCallBody) });
                   if (!filterCall.ok) throw new Error(`Resonator Filter call failed: ${filterCall.status} ${await filterCall.text()}`);
                   const filterData: ResonatorFilterResponse = await filterCall.json();
-                  console.log("MCP: Resonator Filter responded:", filterData);
-
                   finalAgentResponseDetails.response_text = filterData.filtered_text;
                   finalAgentResponseDetails.filter_alignment_score = filterData.alignment_score;
                   finalAgentResponseDetails.filter_warnings = filterData.warnings;
-                  finalAgentResponseDetails.filter_value_alignment_details = filterData.value_alignment; // Capture this
+                  finalAgentResponseDetails.filter_value_alignment_details = filterData.value_alignment;
                   finalAgentResponseDetails.confidence_score = parseFloat(( (finalAgentResponseDetails.pre_filter_confidence || 0.5) * filterData.alignment_score).toFixed(3) );
-                } catch (filterError) { /* ... filter error handling ... */
+                } catch (filterError) {
                   console.error(`MCP: Error calling Resonator Filter for agent ${routedAgentId}:`, filterError);
-                  if (finalAgentResponseDetails) {
-                     finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter call failed."];
-                  }
+                  if (finalAgentResponseDetails) finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter call failed."];
                 }
-              } else { /* ... filter skipped handling ... */
-                 console.warn(`MCP: Resonator Filter URL not configured or no agent response. Skipping filter for agent ${routedAgentId}.`);
-                 if (finalAgentResponseDetails) {
-                    finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter skipped."];
-                 }
+              } else {
+                 if (finalAgentResponseDetails) finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter skipped."];
               }
               log_mcp_status = "routed_and_executed";
               mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, agent_response: finalAgentResponseDetails };
-            } catch (agentError) { /* ... agent error handling ... */
-              console.error(`MCP: Error processing agent ${routedAgentId}:`, agentError);
+            } catch (agentError) {
               log_mcp_status = "routing_error"; log_mcp_reason = `Agent ${routedAgentId} processing failed: ${agentError.message}`;
               mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
             }
           }
-        } else { /* ... no route found handling ... */
-          log_mcp_status = "no_route_found"; log_mcp_reason = "No suitable agent for input.";
+        } else {
+          log_mcp_status = "no_route_found"; log_mcp_reason = "No suitable agent for input. Defaulting or no specific match.";
+          // Fallback: If no agent is specifically matched by keywords or strong desire,
+          // we could potentially route to a default general-purpose agent if one was defined,
+          // or simply return "no_route_found". For now, it's no_route_found if no explicit match.
           mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason };
         }
       }
     }
 
-    const logEntry = {
-        session_id: sessionId, input_text: inputText,
-        input_desired_frequency_profile: desiredFrequency_from_input, // Log this
-        mcp_status: log_mcp_status, mcp_reason: log_mcp_reason,
-        routed_agent_id: routedAgentId,
-        agent_response_text: finalAgentResponseDetails?.response_text,
-        agent_confidence_score: finalAgentResponseDetails?.confidence_score,
+    const logEntry = { /* ... same full logEntry ... */
+        session_id: sessionId, input_text: inputText, input_desired_frequency_profile: desiredFrequency_from_input,
+        mcp_status: log_mcp_status, mcp_reason: log_mcp_reason, routed_agent_id: routedAgentId,
+        agent_response_text: finalAgentResponseDetails?.response_text, agent_confidence_score: finalAgentResponseDetails?.confidence_score,
         kb_article_slug: finalAgentResponseDetails?.kb_article_slug,
-        pre_filter_response: finalAgentResponseDetails?.pre_filter_response,
-        pre_filter_confidence: finalAgentResponseDetails?.pre_filter_confidence,
-        filter_alignment_score: finalAgentResponseDetails?.filter_alignment_score,
-        filter_warnings: finalAgentResponseDetails?.filter_warnings,
-        filter_value_alignment_details: finalAgentResponseDetails?.filter_value_alignment_details, // Log this
-        raw_mcp_response: { ...mcpFinalResponse, agent_response: undefined },
-        raw_agent_response: finalAgentResponseDetails,
-        llm_metadata: finalAgentResponseDetails?.llm_metadata,
-        source: source
+        pre_filter_response: finalAgentResponseDetails?.pre_filter_response, pre_filter_confidence: finalAgentResponseDetails?.pre_filter_confidence,
+        filter_alignment_score: finalAgentResponseDetails?.filter_alignment_score, filter_warnings: finalAgentResponseDetails?.filter_warnings,
+        filter_value_alignment_details: finalAgentResponseDetails?.filter_value_alignment_details,
+        raw_mcp_response: { ...mcpFinalResponse, agent_response: undefined }, raw_agent_response: finalAgentResponseDetails,
+        llm_metadata: finalAgentResponseDetails?.llm_metadata, source: source
     };
     log_interaction_id = await logInteraction(supabase, logEntry);
     if (log_interaction_id) mcpFinalResponse.interaction_id = log_interaction_id;
@@ -251,12 +232,7 @@ serve(async (req: Request) => {
   } catch (error) { /* ... same error handling ... */
     console.error('MCP: Critical Error:', error);
     const errorResponse = { status: "error", message: error.message };
-    const errorLogEntry = {
-        session_id: sessionId, input_text: inputText,
-        input_desired_frequency_profile: desiredFrequency_from_input, // Also log on error if available
-        mcp_status: "error", mcp_reason: error.message,
-        raw_mcp_response: errorResponse, source: source
-     };
+    const errorLogEntry = { session_id: sessionId, input_text: inputText, input_desired_frequency_profile: desiredFrequency_from_input, mcp_status: "error", mcp_reason: error.message, raw_mcp_response: errorResponse, source: source };
     logInteraction(supabase, errorLogEntry).catch(logError => console.error("MCP: Failed to log critical error:", logError));
     return new Response( JSON.stringify(errorResponse), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 });
   }
