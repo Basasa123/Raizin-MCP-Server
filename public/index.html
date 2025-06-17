@@ -4,121 +4,120 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Raizin Vault - Frequency Interface Prototype</title>
-    <link href="styles/output.css" rel="stylesheet"> {/* Adjusted path */}
+    <link href="styles/output.css" rel="stylesheet">
     <script>
-        // Simulated values from values.json
-        const PROJECT_NAME = "Raizin Vault";
-        const PROJECT_VISION = "A carrier of encoded evolution, built from frequency, not code.";
-        const CORE_VALUES = [
-            "Transmit trust",
-            "Transmit innovation",
-            "Transmit sovereignty"
-        ];
-        const CLARITY_AGENT_ID = "clarity_pulse_v1_001";
+        // URL for the deployed MCP Node function
+        // For local Supabase CLI: 'http://localhost:54321/functions/v1/mcp_node'
+        // For deployed: '[YOUR_SUPABASE_PROJECT_URL]/functions/v1/mcp_node'
+        // Using a relative path assuming deployed to the same Supabase project.
+        const MCP_NODE_URL = '/functions/v1/mcp_node';
+        // This might need to be configured if your project URL is different
+        // or if you are running locally and your page isn't served by Supabase.
+        // For development, you might replace this with the full localhost URL.
 
-        // Simulated MCP Node Logic (based on mcp_prototype_design.md)
-        function simulateMCPNode(inputText) {
-            console.log(`Simulating MCP Node for input: "${inputText}"`);
-            if (!inputText || inputText.trim().split(/\s+/).length < 3) {
-                return {
-                    status: "dissonance_detected",
-                    reason: "Input too short",
-                    resolution: "Please provide more details."
-                };
-            }
-            const negativeKeywords = ["useless", "broken", "stupid", "fail"];
-            if (negativeKeywords.some(keyword => inputText.toLowerCase().includes(keyword))) {
-                return {
-                    status: "dissonance_detected",
-                    reason: "Potential negative sentiment",
-                    resolution: "Could you please rephrase or provide more context?"
-                };
-            }
-
-            const clarityKeywords = ["what is", "explain", "define", "how to", "faq"];
-            const wantsClarity = clarityKeywords.some(keyword => inputText.toLowerCase().includes(keyword));
-
-            if (wantsClarity) {
-                return {
-                    status: "routed",
-                    agent_id: CLARITY_AGENT_ID,
-                    transformed_input: { originalText: inputText }
-                };
-            } else {
-                return {
-                    status: "no_route_found",
-                    reason: "No suitable agent profile matched the input frequency."
-                };
-            }
-        }
-
-        // Simulated Clarity Agent Logic (based on clarity_agent_design.md)
-        function simulateClarityAgent(transformedInput) {
-            const { originalText } = transformedInput;
-            console.log(`Simulating Clarity Agent for original text: "${originalText}"`);
-            let responseText = "";
-            let confidenceScore = 0.6;
-
-            if (originalText && originalText.toLowerCase().includes("what is raizin vault")) {
-                responseText = `${PROJECT_NAME}, as envisioned, is '${PROJECT_VISION}'. It operates on the core values of: ${CORE_VALUES.join(', ')}. My purpose is to provide clear and trustworthy information.`;
-                confidenceScore = 0.95;
-            } else {
-                responseText = `This is the Clarity Agent (ID: ${CLARITY_AGENT_ID}). I have received your query: "${originalText}". My primary function is to provide clear and direct information.`;
-                confidenceScore = 0.7;
-            }
-            return {
-                status: "success",
-                agent_id: CLARITY_AGENT_ID,
-                response_text: responseText,
-                confidence_score: confidenceScore
-            };
-        }
-
-        function handleSubmitQuery() {
+        async function handleSubmitQuery() {
             const queryInput = document.getElementById('queryInput');
             const responseDisplay = document.getElementById('responseDisplay');
             const toneIndicator = document.getElementById('toneIndicator');
             const agentIdDisplay = document.getElementById('agentIdDisplay');
+            const submitButton = document.getElementById('submitQueryButton');
 
             const inputText = queryInput.value;
-            responseDisplay.textContent = ""; // Clear previous response
-            agentIdDisplay.textContent = ""; // Clear previous agent ID
+            responseDisplay.textContent = "Processing...";
+            agentIdDisplay.textContent = "";
+            submitButton.disabled = true;
+            toneIndicator.className = 'w-full h-4 bg-yellow-400 my-2 animate-pulse rounded-md'; // Processing indicator
 
-            const mcpResponse = simulateMCPNode(inputText);
-            console.log("MCP Response:", mcpResponse);
+            try {
+                const response = await fetch(MCP_NODE_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // 'Authorization': 'Bearer YOUR_SUPABASE_ANON_KEY' // Add if RLS requires auth for function access
+                    },
+                    body: JSON.stringify({
+                        inputText: inputText,
+                        source: "prototype_ui_live", // Added source
+                        // desiredFrequency: { clarity: 0.9 } // Example if sending desiredFrequency
+                    })
+                });
 
-            switch (mcpResponse.status) {
-                case "dissonance_detected":
-                    responseDisplay.textContent = `MCP: ${mcpResponse.resolution} (Reason: ${mcpResponse.reason})`;
-                    toneIndicator.className = 'w-full h-4 bg-red-500 my-2 rounded-md'; // Red for dissonance
-                    break;
-                case "no_route_found":
-                    responseDisplay.textContent = `MCP: No route found. (Reason: ${mcpResponse.reason})`;
-                    toneIndicator.className = 'w-full h-4 bg-gray-400 my-2 rounded-md'; // Grey for no route
-                    break;
-                case "routed":
-                    agentIdDisplay.textContent = `MCP routed to: ${mcpResponse.agent_id}`;
-                    if (mcpResponse.agent_id === CLARITY_AGENT_ID) {
-                        const agentResponse = simulateClarityAgent(mcpResponse.transformed_input);
-                        console.log("Agent Response:", agentResponse);
-                        responseDisplay.textContent = `Agent [${agentResponse.agent_id}]: ${agentResponse.response_text} (Confidence: ${agentResponse.confidence_score})`;
-                        toneIndicator.className = 'w-full h-4 bg-blue-500 my-2 rounded-md'; // Blue for clarity
-                    } else {
-                        responseDisplay.textContent = `MCP: Routed to unknown agent ID: ${mcpResponse.agent_id}`;
-                        toneIndicator.className = 'w-full h-4 bg-yellow-400 my-2 rounded-md'; // Yellow for unknown
-                    }
-                    break;
-                default:
-                    responseDisplay.textContent = "Unknown MCP response status.";
-                    toneIndicator.className = 'w-full h-4 bg-gray-200 my-2 rounded-md';
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    throw new Error(`MCP Node request failed with status ${response.status}: ${errorData}`);
+                }
+
+                const mcpResponse = await response.json();
+                console.log("Live MCP Response:", mcpResponse);
+
+                // Clear processing
+                responseDisplay.textContent = "";
+                submitButton.disabled = false;
+                toneIndicator.classList.remove('animate-pulse');
+
+                switch (mcpResponse.status) {
+                    case "dissonance_detected":
+                        responseDisplay.textContent = `MCP: ${mcpResponse.resolution} (Reason: ${mcpResponse.reason})`;
+                        toneIndicator.className = 'w-full h-4 bg-red-500 my-2 rounded-md';
+                        break;
+                    case "no_route_found":
+                    case "routed_not_callable": // MCP identified agent but couldn't call (e.g. URL missing)
+                    case "routing_error": // MCP tried to call agent but failed
+                        responseDisplay.textContent = `MCP: ${mcpResponse.status} (Reason: ${mcpResponse.reason || 'No specific reason provided.'})`;
+                        agentIdDisplay.textContent = mcpResponse.agent_id ? `Targeted Agent: ${mcpResponse.agent_id}` : "";
+                        toneIndicator.className = 'w-full h-4 bg-gray-400 my-2 rounded-md';
+                        break;
+                    case "routed_and_executed":
+                        if (mcpResponse.agent_response && mcpResponse.agent_id) {
+                            agentIdDisplay.textContent = `MCP routed to Agent: ${mcpResponse.agent_id}`;
+                            responseDisplay.textContent = `Agent [${mcpResponse.agent_response.agent_id}]: ${mcpResponse.agent_response.response_text} (Confidence: ${mcpResponse.agent_response.confidence_score})`;
+                            // Assuming 'clarity' for blue tone for now if clarity_pulse_v1_001 responded
+                            if (mcpResponse.agent_id === "clarity_pulse_v1_001") {
+                                toneIndicator.className = 'w-full h-4 bg-blue-500 my-2 rounded-md';
+                            } else {
+                                toneIndicator.className = 'w-full h-4 bg-green-500 my-2 rounded-md'; // Generic green for other agents
+                            }
+                        } else {
+                            responseDisplay.textContent = `MCP: Routed to ${mcpResponse.agent_id}, but agent response format is unexpected.`;
+                            toneIndicator.className = 'w-full h-4 bg-yellow-500 my-2 rounded-md';
+                        }
+                        break;
+                    case "error":
+                         responseDisplay.textContent = `MCP Error: ${mcpResponse.message}`;
+                         toneIndicator.className = 'w-full h-4 bg-red-700 my-2 rounded-md';
+                        break;
+                    default:
+                        responseDisplay.textContent = "Unknown MCP response status: " + mcpResponse.status;
+                        toneIndicator.className = 'w-full h-4 bg-gray-200 my-2 rounded-md';
+                }
+
+            } catch (error) {
+                console.error("Error in handleSubmitQuery:", error);
+                responseDisplay.textContent = `Error: ${error.message}`;
+                toneIndicator.className = 'w-full h-4 bg-red-700 my-2 rounded-md'; // Dark red for client-side script error
+                submitButton.disabled = false;
+                toneIndicator.classList.remove('animate-pulse');
             }
         }
 
-        // Ensure DOM is loaded before attaching event listeners
         document.addEventListener('DOMContentLoaded', () => {
             const submitButton = document.getElementById('submitQueryButton');
             if(submitButton) {
                 submitButton.addEventListener('click', handleSubmitQuery);
+            }
+            // Set a default MCP_NODE_URL for local testing if not served by Supabase
+            // This is a common pattern if you're running a local dev server for the HTML page
+            // and Supabase functions are on localhost:54321
+            if (window.location.hostname === "localhost" && !MCP_NODE_URL.startsWith("http")) {
+                 // Overwrite if it seems like we are in local dev and MCP_NODE_URL is relative
+                 // You might want a more robust configuration mechanism for real apps
+                 // For example, injecting this URL via a script or using environment variables at build time
+                 // For now, this hardcoded overwrite helps for local `npx http-server public` style testing
+                 // globalThis.MCP_NODE_URL_OVERWRITTEN_FOR_LOCAL = 'http://localhost:54321/functions/v1/mcp_node';
+                 // console.warn(`MCP_NODE_URL might need to be '${globalThis.MCP_NODE_URL_OVERWRITTEN_FOR_LOCAL}' for local testing if not served via Supabase.`);
+                 // For simplicity, I will not overwrite here, but it's a common gotcha.
+                 // The user will need to ensure their Supabase CLI is running and functions are served,
+                 // and the page is either also served by Supabase or they adjust MCP_NODE_URL.
             }
         });
     </script>
@@ -128,7 +127,7 @@
     <div class="w-full max-w-2xl bg-gray-800 p-6 rounded-lg shadow-xl">
         <header class="text-center mb-6">
             <h1 class="text-4xl font-bold text-purple-400">Raizin Vault</h1>
-            <p class="text-lg text-purple-300">Frequency Interface Prototype</p>
+            <p class="text-lg text-purple-300">Frequency Interface Prototype (Live)</p>
         </header>
 
         <div class="mb-4">

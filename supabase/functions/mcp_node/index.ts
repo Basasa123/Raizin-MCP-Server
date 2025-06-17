@@ -4,27 +4,68 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log(`MCP Node function booting up...`);
+console.log(`MCP Node function booting up... v3 (dynamic agent profiles)`);
 
 // Initialize Supabase client
-// IMPORTANT: These environment variables must be set in your Supabase project's Edge Function settings
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
-const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY'); // Or service_role key if needed for write access and RLS is restrictive
+const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+const clarityAgentUrl = Deno.env.get('CLARITY_AGENT_URL');
 
 if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables.');
-    // Depending on policy, you might want to prevent the function from serving if Supabase isn't configured
+}
+if (!clarityAgentUrl) {
+    console.warn('Missing CLARITY_AGENT_URL environment variable. MCP will not be able to call Clarity Agent.');
 }
 
-// Placeholder for Agent Profile data
-const AGENT_PROFILES = {
-  "clarity_pulse_v1_001": {
-    agent_id: "clarity_pulse_v1_001",
-    name: "Instant Clarity Agent",
-    frequency_profile: { clarity: 0.95, trust: 0.8 },
-    keywords: ["what is", "explain", "define", "how to", "faq"]
-  }
-};
+// In-memory cache for agent profiles
+let cachedAgentProfiles: Record<string, any> | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getAgentProfiles(supabase: SupabaseClient | null): Promise<Record<string, any>> {
+    const now = Date.now();
+    if (cachedAgentProfiles && (now - cacheTimestamp < CACHE_TTL)) {
+        console.log("Returning agent profiles from cache.");
+        return cachedAgentProfiles;
+    }
+
+    if (!supabase) {
+        console.warn("Supabase client not available for getAgentProfiles. Returning empty profiles.");
+        return {};
+    }
+
+    console.log("Fetching agent profiles from database...");
+    try {
+        const { data, error } = await supabase
+            .from('agent_profiles')
+            .select('*')
+            .eq('is_active', true);
+
+        if (error) {
+            console.error("Error fetching agent profiles:", error);
+            // Return stale cache if available, otherwise empty
+            return cachedAgentProfiles || {};
+        }
+
+        const profilesMap: Record<string, any> = {};
+        if (data) {
+            for (const profile of data) {
+                profilesMap[profile.agent_id] = profile;
+            }
+        }
+
+        cachedAgentProfiles = profilesMap;
+        cacheTimestamp = now;
+        console.log("Agent profiles fetched and cached:", cachedAgentProfiles);
+        return cachedAgentProfiles;
+
+    } catch (e) {
+        console.error("Exception during getAgentProfiles:", e);
+        return cachedAgentProfiles || {}; // Return stale cache on exception
+    }
+}
+
 
 interface InputSignal {
   inputText: string;
@@ -33,7 +74,14 @@ interface InputSignal {
     [key: string]: number | undefined;
   };
   sessionId?: string;
-  source?: string; // Added source for logging
+  source?: string;
+}
+
+interface AgentResponse {
+    status: string;
+    agent_id: string;
+    response_text: string;
+    confidence_score: number;
 }
 
 interface McpResponse {
@@ -41,7 +89,7 @@ interface McpResponse {
     reason?: string;
     resolution?: string;
     agent_id?: string;
-    transformed_input?: any;
+    agent_response?: AgentResponse | null;
 }
 
 async function logInteraction(supabase: SupabaseClient | null, logData: any) {
@@ -50,12 +98,10 @@ async function logInteraction(supabase: SupabaseClient | null, logData: any) {
         return;
     }
     try {
+        if (logData.agent_confidence_score) logData.agent_confidence_score = parseFloat(logData.agent_confidence_score);
         const { error } = await supabase.from('interaction_log').insert([logData]);
-        if (error) {
-            console.error('Error logging interaction to Supabase:', error);
-        } else {
-            console.log('Interaction logged successfully.');
-        }
+        if (error) console.error('Error logging interaction to Supabase:', error);
+        else console.log('Interaction logged successfully.');
     } catch (e) {
         console.error('Exception during logInteraction:', e);
     }
@@ -68,95 +114,122 @@ serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  let mcpResponse: McpResponse;
+  // Fetch current agent profiles
+  const AGENT_PROFILES = await getAgentProfiles(supabase);
+
+  let mcpFinalResponse: McpResponse;
   let inputText = "";
   let sessionId: string | undefined;
   let source: string | undefined;
+  let routedAgentId: string | null = null;
+  let actualAgentResponse: AgentResponse | null = null;
+  let transformedInputForAgent: any = null;
+
+  let log_mcp_status: string = "";
+  let log_mcp_reason: string | undefined;
+  let log_routed_agent_id: string | undefined;
+  let log_agent_response_text: string | undefined;
+  let log_agent_confidence_score: number | undefined;
+  let log_raw_mcp_response: any = {};
+  let log_raw_agent_response: any = null;
 
   try {
     const requestBody: InputSignal = await req.json();
     inputText = requestBody.inputText;
     sessionId = requestBody.sessionId;
-    source = requestBody.source || (req.headers.get('user-agent')?.includes('Mozilla') ? 'prototype_ui' : 'api_call'); // Basic source detection
+    source = requestBody.source || (req.headers.get('user-agent')?.includes('Mozilla') ? 'prototype_ui' : 'api_call');
     const { desiredFrequency } = requestBody;
 
     console.log('MCP Node received input:', { inputText, desiredFrequency, sessionId, source });
+    console.log('Using AGENT_PROFILES:', AGENT_PROFILES);
 
-    let routedAgentId: string | null = null;
+
+    const clarityAgentProfile = AGENT_PROFILES["clarity_pulse_v1_001"];
 
     // --- 1. Dissonance Detection ---
     if (!inputText || inputText.trim().split(/\s+/).length < 3) {
-      mcpResponse = {
-        status: "dissonance_detected",
-        reason: "Input too short",
-        resolution: "Please provide more details."
-      };
+      log_mcp_status = "dissonance_detected";
+      log_mcp_reason = "Input too short";
+      mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Please provide more details." };
     } else {
-      const negativeKeywords = ["useless", "broken", "stupid", "fail"];
+      const negativeKeywords = ["useless", "broken", "stupid", "fail"]; // Could also come from a config/DB
       if (negativeKeywords.some(keyword => inputText.toLowerCase().includes(keyword))) {
-        mcpResponse = {
-          status: "dissonance_detected",
-          reason: "Potential negative sentiment",
-          resolution: "Could you please rephrase or provide more context?"
-        };
+        log_mcp_status = "dissonance_detected";
+        log_mcp_reason = "Potential negative sentiment";
+        mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Could you please rephrase or provide more context?" };
       } else {
-        // --- 2. Frequency Routing Rule ---
-        const clarityKeywords = AGENT_PROFILES["clarity_pulse_v1_001"].keywords;
+        // --- 2. Frequency Routing Rule (using dynamic profiles for selection) ---
+        const clarityKeywords = clarityAgentProfile?.keywords || [];
         const wantsClarity = (desiredFrequency?.clarity && desiredFrequency.clarity > 0.7) ||
                              clarityKeywords.some(keyword => inputText.toLowerCase().includes(keyword));
 
-        if (wantsClarity && AGENT_PROFILES["clarity_pulse_v1_001"]) {
-          routedAgentId = "clarity_pulse_v1_001";
-          mcpResponse = {
-            status: "routed",
-            agent_id: routedAgentId,
-            transformed_input: { originalText: inputText, desiredFrequency }
-          };
-          console.log(`Routing to Clarity Agent: ${routedAgentId}`);
+        if (wantsClarity && clarityAgentProfile) {
+          routedAgentId = clarityAgentProfile.agent_id;
+          log_routed_agent_id = routedAgentId;
+          transformedInputForAgent = { originalText: inputText, desiredFrequency, sessionId, source };
+
+          // Invocation still uses specific env var for clarity agent for now
+          if (clarityAgentUrl && routedAgentId === "clarity_pulse_v1_001") {
+            console.log(`Attempting to call Clarity Agent at: ${clarityAgentUrl}`);
+            try {
+              const agentCallResponse = await fetch(clarityAgentUrl, {
+                method: 'POST',
+                headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` },
+                body: JSON.stringify(transformedInputForAgent)
+              });
+
+              if (!agentCallResponse.ok) {
+                const errorBody = await agentCallResponse.text();
+                throw new Error(`Clarity Agent call failed with status ${agentCallResponse.status}: ${errorBody}`);
+              }
+              actualAgentResponse = await agentCallResponse.json() as AgentResponse;
+              log_agent_response_text = actualAgentResponse?.response_text;
+              log_agent_confidence_score = actualAgentResponse?.confidence_score;
+              log_raw_agent_response = actualAgentResponse;
+              log_mcp_status = "routed_and_executed";
+              mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, agent_response: actualAgentResponse };
+              console.log(`Clarity Agent responded:`, actualAgentResponse);
+
+            } catch (agentError) {
+              console.error('Error calling Clarity Agent:', agentError);
+              log_mcp_status = "routing_error";
+              log_mcp_reason = `Failed to execute agent ${routedAgentId}: ${agentError.message}`;
+              mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
+            }
+          } else {
+            log_mcp_status = "routed_not_callable";
+            log_mcp_reason = clarityAgentUrl ? `Agent ${routedAgentId} is not the configured Clarity Agent or profile mismatch` : "Clarity Agent URL not configured";
+            mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
+            console.log(log_mcp_reason);
+          }
         } else {
-          mcpResponse = {
-            status: "no_route_found",
-            reason: "No suitable agent profile matched the input frequency."
-          };
+          log_mcp_status = "no_route_found";
+          log_mcp_reason = "No suitable agent profile matched the input frequency.";
+          mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason };
           console.log('No suitable agent route found.');
         }
       }
     }
 
-    // --- Log Interaction (excluding transformed_input from raw_mcp_response for brevity if large) ---
+    log_raw_mcp_response = { ...mcpFinalResponse };
+
     const logEntry = {
-        session_id: sessionId,
-        input_text: inputText,
-        mcp_status: mcpResponse.status,
-        mcp_reason: mcpResponse.reason,
-        routed_agent_id: mcpResponse.agent_id,
-        raw_mcp_response: { ...mcpResponse, transformed_input: undefined }, // Avoid logging potentially large/redundant input
-        source: source
+        session_id: sessionId, input_text: inputText, mcp_status: log_mcp_status, mcp_reason: log_mcp_reason,
+        routed_agent_id: log_routed_agent_id, agent_response_text: log_agent_response_text,
+        agent_confidence_score: log_agent_confidence_score, raw_mcp_response: log_raw_mcp_response,
+        raw_agent_response: log_raw_agent_response, source: source
     };
     await logInteraction(supabase, logEntry);
 
-    return new Response(
-      JSON.stringify(mcpResponse),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
+    return new Response( JSON.stringify(mcpFinalResponse), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
-    console.error('Error in MCP Node:', error);
+    console.error('Critical Error in MCP Node:', error);
     const errorResponse = { status: "error", message: error.message };
-    // Log error interaction
     const errorLogEntry = {
-        session_id: sessionId,
-        input_text: inputText, // inputText might not be available if JSON parsing failed
-        mcp_status: "error",
-        mcp_reason: error.message,
-        raw_mcp_response: errorResponse,
-        source: source
+        session_id: sessionId, input_text: inputText, mcp_status: "error", mcp_reason: error.message,
+        raw_mcp_response: errorResponse, source: source
     };
-    await logInteraction(supabase, errorLogEntry);
-
-    return new Response(
-      JSON.stringify(errorResponse),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
-    );
+    logInteraction(supabase, errorLogEntry).catch(logError => console.error("Failed to log critical error:", logError));
+    return new Response( JSON.stringify(errorResponse), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 });
   }
 });
