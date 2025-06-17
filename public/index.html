@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raizin Vault - Frequency Interface Prototype</title>
+    <link href="styles/output.css" rel="stylesheet"> {/* Adjusted path */}
+    <script>
+        // Simulated values from values.json
+        const PROJECT_NAME = "Raizin Vault";
+        const PROJECT_VISION = "A carrier of encoded evolution, built from frequency, not code.";
+        const CORE_VALUES = [
+            "Transmit trust",
+            "Transmit innovation",
+            "Transmit sovereignty"
+        ];
+        const CLARITY_AGENT_ID = "clarity_pulse_v1_001";
+
+        // Simulated MCP Node Logic (based on mcp_prototype_design.md)
+        function simulateMCPNode(inputText) {
+            console.log(`Simulating MCP Node for input: "${inputText}"`);
+            if (!inputText || inputText.trim().split(/\s+/).length < 3) {
+                return {
+                    status: "dissonance_detected",
+                    reason: "Input too short",
+                    resolution: "Please provide more details."
+                };
+            }
+            const negativeKeywords = ["useless", "broken", "stupid", "fail"];
+            if (negativeKeywords.some(keyword => inputText.toLowerCase().includes(keyword))) {
+                return {
+                    status: "dissonance_detected",
+                    reason: "Potential negative sentiment",
+                    resolution: "Could you please rephrase or provide more context?"
+                };
+            }
+
+            const clarityKeywords = ["what is", "explain", "define", "how to", "faq"];
+            const wantsClarity = clarityKeywords.some(keyword => inputText.toLowerCase().includes(keyword));
+
+            if (wantsClarity) {
+                return {
+                    status: "routed",
+                    agent_id: CLARITY_AGENT_ID,
+                    transformed_input: { originalText: inputText }
+                };
+            } else {
+                return {
+                    status: "no_route_found",
+                    reason: "No suitable agent profile matched the input frequency."
+                };
+            }
+        }
+
+        // Simulated Clarity Agent Logic (based on clarity_agent_design.md)
+        function simulateClarityAgent(transformedInput) {
+            const { originalText } = transformedInput;
+            console.log(`Simulating Clarity Agent for original text: "${originalText}"`);
+            let responseText = "";
+            let confidenceScore = 0.6;
+
+            if (originalText && originalText.toLowerCase().includes("what is raizin vault")) {
+                responseText = `${PROJECT_NAME}, as envisioned, is '${PROJECT_VISION}'. It operates on the core values of: ${CORE_VALUES.join(', ')}. My purpose is to provide clear and trustworthy information.`;
+                confidenceScore = 0.95;
+            } else {
+                responseText = `This is the Clarity Agent (ID: ${CLARITY_AGENT_ID}). I have received your query: "${originalText}". My primary function is to provide clear and direct information.`;
+                confidenceScore = 0.7;
+            }
+            return {
+                status: "success",
+                agent_id: CLARITY_AGENT_ID,
+                response_text: responseText,
+                confidence_score: confidenceScore
+            };
+        }
+
+        function handleSubmitQuery() {
+            const queryInput = document.getElementById('queryInput');
+            const responseDisplay = document.getElementById('responseDisplay');
+            const toneIndicator = document.getElementById('toneIndicator');
+            const agentIdDisplay = document.getElementById('agentIdDisplay');
+
+            const inputText = queryInput.value;
+            responseDisplay.textContent = ""; // Clear previous response
+            agentIdDisplay.textContent = ""; // Clear previous agent ID
+
+            const mcpResponse = simulateMCPNode(inputText);
+            console.log("MCP Response:", mcpResponse);
+
+            switch (mcpResponse.status) {
+                case "dissonance_detected":
+                    responseDisplay.textContent = `MCP: ${mcpResponse.resolution} (Reason: ${mcpResponse.reason})`;
+                    toneIndicator.className = 'w-full h-4 bg-red-500 my-2 rounded-md'; // Red for dissonance
+                    break;
+                case "no_route_found":
+                    responseDisplay.textContent = `MCP: No route found. (Reason: ${mcpResponse.reason})`;
+                    toneIndicator.className = 'w-full h-4 bg-gray-400 my-2 rounded-md'; // Grey for no route
+                    break;
+                case "routed":
+                    agentIdDisplay.textContent = `MCP routed to: ${mcpResponse.agent_id}`;
+                    if (mcpResponse.agent_id === CLARITY_AGENT_ID) {
+                        const agentResponse = simulateClarityAgent(mcpResponse.transformed_input);
+                        console.log("Agent Response:", agentResponse);
+                        responseDisplay.textContent = `Agent [${agentResponse.agent_id}]: ${agentResponse.response_text} (Confidence: ${agentResponse.confidence_score})`;
+                        toneIndicator.className = 'w-full h-4 bg-blue-500 my-2 rounded-md'; // Blue for clarity
+                    } else {
+                        responseDisplay.textContent = `MCP: Routed to unknown agent ID: ${mcpResponse.agent_id}`;
+                        toneIndicator.className = 'w-full h-4 bg-yellow-400 my-2 rounded-md'; // Yellow for unknown
+                    }
+                    break;
+                default:
+                    responseDisplay.textContent = "Unknown MCP response status.";
+                    toneIndicator.className = 'w-full h-4 bg-gray-200 my-2 rounded-md';
+            }
+        }
+
+        // Ensure DOM is loaded before attaching event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            const submitButton = document.getElementById('submitQueryButton');
+            if(submitButton) {
+                submitButton.addEventListener('click', handleSubmitQuery);
+            }
+        });
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center p-4">
+
+    <div class="w-full max-w-2xl bg-gray-800 p-6 rounded-lg shadow-xl">
+        <header class="text-center mb-6">
+            <h1 class="text-4xl font-bold text-purple-400">Raizin Vault</h1>
+            <p class="text-lg text-purple-300">Frequency Interface Prototype</p>
+        </header>
+
+        <div class="mb-4">
+            <label for="queryInput" class="block text-sm font-medium text-gray-300 mb-1">Enter your query:</label>
+            <input type="text" id="queryInput" class="bg-gray-700 text-white w-full p-2 border border-gray-600 rounded-md focus:ring-purple-500 focus:border-purple-500" placeholder="e.g., what is raizin vault?">
+        </div>
+
+        <button id="submitQueryButton" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md transition duration-150">
+            Transmit Query
+        </button>
+
+        <div class="mt-6">
+            <h2 class="text-xl font-semibold text-purple-300">System Response:</h2>
+            <div id="toneIndicator" class="w-full h-4 bg-gray-700 my-2 rounded-md"></div>
+            <p id="agentIdDisplay" class="text-sm text-gray-400 italic mb-1"></p>
+            <div id="responseDisplay" class="mt-1 p-3 bg-gray-700 rounded-md min-h-[50px] text-gray-200 whitespace-pre-wrap">
+                Awaiting query...
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
