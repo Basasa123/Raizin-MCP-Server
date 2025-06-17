@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raizin Vault - Resonance Dashboard</title>
+    <link href="styles/output.css" rel="stylesheet"> <!-- Assuming output.css is in public/styles/ -->
+    <style>
+        .dashboard-section {
+            @apply bg-gray-800 p-6 rounded-lg shadow-xl mb-8;
+        }
+        .dashboard-title {
+            @apply text-2xl font-semibold text-purple-300 mb-4;
+        }
+        .data-table {
+            @apply min-w-full divide-y divide-gray-700 bg-gray-750 rounded-md;
+        }
+        .data-table th {
+            @apply px-4 py-2 text-left text-xs font-medium text-purple-300 uppercase tracking-wider bg-gray-700;
+        }
+        .data-table td {
+            @apply px-4 py-2 text-sm text-gray-200 whitespace-nowrap;
+        }
+        .data-table tbody tr:nth-child(even) {
+            @apply bg-gray-800;
+        }
+         .input-label { @apply block text-sm font-medium text-gray-300 mb-1; }
+        .input-field { @apply bg-gray-700 text-white w-full p-2 border border-gray-600 rounded-md focus:ring-purple-500 focus:border-purple-500 mb-2; }
+        .button { @apply bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md transition duration-150; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-8">
+    <header class="text-center mb-10">
+        <h1 class="text-4xl font-bold text-purple-400">Raizin Vault - Resonance Dashboard</h1>
+    </header>
+
+    <main>
+        <!-- Agent Resonance Score Trends Section -->
+        <section id="agentResonanceSection" class="dashboard-section">
+            <h2 class="dashboard-title">Agent Resonance Score Trends</h2>
+            <div>
+                <label for="resonanceAgentId" class="input-label">Agent ID:</label>
+                <input type="text" id="resonanceAgentId" class="input-field" value="clarity_pulse_v1_001">
+                <label for="resonanceDays" class="input-label">Days:</label>
+                <input type="number" id="resonanceDays" class="input-field" value="7">
+                <button id="loadResonanceData" class="button">Load Trend</button>
+            </div>
+            <div id="resonanceDataContainer" class="mt-4 overflow-x-auto"></div>
+        </section>
+
+        <!-- Tone Frequency Heatmap Section -->
+        <section id="toneHeatmapSection" class="dashboard-section">
+            <h2 class="dashboard-title">Tone Frequency Heatmap</h2>
+            <div>
+                <label for="heatmapDays" class="input-label">Days:</label>
+                <input type="number" id="heatmapDays" class="input-field" value="7">
+                <button id="loadHeatmapData" class="button">Load Heatmap</button>
+            </div>
+            <div id="heatmapDataContainer" class="mt-4 overflow-x-auto"></div>
+        </section>
+
+        <!-- Top Routed Agents by Tone Section -->
+        <section id="topAgentsSection" class="dashboard-section">
+            <h2 class="dashboard-title">Top Routed Agents by Desired Tone</h2>
+            <div>
+                <label for="topAgentsToneDimension" class="input-label">Tone Dimension:</label>
+                <input type="text" id="topAgentsToneDimension" class="input-field" value="clarity">
+                <label for="topAgentsDays" class="input-label">Days:</label>
+                <input type="number" id="topAgentsDays" class="input-field" value="7">
+                <button id="loadTopAgentsData" class="button">Load Top Agents</button>
+            </div>
+            <div id="topAgentsDataContainer" class="mt-4 overflow-x-auto"></div>
+        </section>
+
+        <!-- Dissonance Spike Alerts Section -->
+        <section id="dissonanceAlertsSection" class="dashboard-section">
+            <h2 class="dashboard-title">Dissonance Spike Alerts</h2>
+            <div>
+                <label for="alertsDays" class="input-label">Days:</label>
+                <input type="number" id="alertsDays" class="input-field" value="7">
+                <label for="alertsThreshold" class="input-label">Alignment Threshold (e.g., 0.4):</label>
+                <input type="number" step="0.1" id="alertsThreshold" class="input-field" value="0.4">
+                <button id="loadAlertsData" class="button">Load Alerts</button>
+            </div>
+            <div id="alertsDataContainer" class="mt-4 overflow-x-auto"></div>
+        </section>
+    </main>
+
+    <script>
+        const BASE_FUNC_URL = '/functions/v1'; // Adjust if your Supabase URL structure is different
+
+        function displayError(containerId, error) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<p class="text-red-400">Error: ${error.message || 'Failed to load data.'}</p>`;
+            console.error(`Error for ${containerId}:`, error);
+        }
+
+        // --- Agent Resonance Score Trends ---
+        async function fetchAndDisplayResonanceData() {
+            const agentId = document.getElementById('resonanceAgentId').value;
+            const days = document.getElementById('resonanceDays').value;
+            const containerId = 'resonanceDataContainer';
+            document.getElementById(containerId).innerHTML = '<p class="text-purple-300">Loading trend data...</p>';
+
+            if (!agentId) {
+                displayError(containerId, { message: "Agent ID is required."});
+                return;
+            }
+            try {
+                const response = await fetch(`${BASE_FUNC_URL}/get_agent_resonance_trends?agent_id=${agentId}&days=${days}`);
+                if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
+                const data = await response.json();
+                renderResonanceTable(data, containerId);
+            } catch (err) {
+                displayError(containerId, err);
+            }
+        }
+
+        function renderResonanceTable(data, containerId) {
+            const container = document.getElementById(containerId);
+            if (!data || data.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No resonance trend data found for this period.</p>';
+                return;
+            }
+            let tableHtml = '<table class="data-table"><thead><tr><th>Date</th><th>Resonance Score</th></tr></thead><tbody>';
+            data.forEach(item => {
+                tableHtml += `<tr><td>${new Date(item.created_at).toLocaleString()}</td><td>${item.filter_alignment_score !== null ? item.filter_alignment_score.toFixed(3) : 'N/A'}</td></tr>`;
+            });
+            tableHtml += '</tbody></table>';
+            container.innerHTML = tableHtml;
+        }
+
+        // --- Tone Frequency Heatmap ---
+        const TRACKED_TONES_FRONTEND = ["clarity", "innovation", "trust", "sovereignty", "empathy", "urgency"];
+        async function fetchAndDisplayHeatmapData() {
+            const days = document.getElementById('heatmapDays').value;
+            const containerId = 'heatmapDataContainer';
+            document.getElementById(containerId).innerHTML = '<p class="text-purple-300">Loading heatmap data...</p>';
+            try {
+                const response = await fetch(`${BASE_FUNC_URL}/get_tone_frequency_heatmap_data?days=${days}`);
+                if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
+                const data = await response.json();
+                renderHeatmapTable(data, containerId);
+            } catch (err) {
+                displayError(containerId, err);
+            }
+        }
+
+        function renderHeatmapTable(data, containerId) {
+            const container = document.getElementById(containerId);
+            const dates = Object.keys(data).sort();
+            if (dates.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No heatmap data found for this period.</p>';
+                return;
+            }
+            let tableHtml = '<table class="data-table"><thead><tr><th>Date</th>';
+            TRACKED_TONES_FRONTEND.forEach(tone => tableHtml += `<th>${tone.charAt(0).toUpperCase() + tone.slice(1)}</th>`);
+            tableHtml += '</tr></thead><tbody>';
+            dates.forEach(date => {
+                tableHtml += `<tr><td>${date}</td>`;
+                TRACKED_TONES_FRONTEND.forEach(tone => {
+                    tableHtml += `<td>${data[date][tone] !== undefined ? data[date][tone] : 0}</td>`;
+                });
+                tableHtml += '</tr>';
+            });
+            tableHtml += '</tbody></table>';
+            container.innerHTML = tableHtml;
+        }
+
+        // --- Top Routed Agents by Tone ---
+        async function fetchAndDisplayTopAgentsData() {
+            const toneDimension = document.getElementById('topAgentsToneDimension').value;
+            const days = document.getElementById('topAgentsDays').value;
+            const containerId = 'topAgentsDataContainer';
+            document.getElementById(containerId).innerHTML = '<p class="text-purple-300">Loading top agents data...</p>';
+            if (!toneDimension) {
+                displayError(containerId, { message: "Tone dimension is required."});
+                return;
+            }
+            try {
+                const response = await fetch(`${BASE_FUNC_URL}/get_top_routed_agents_by_tone?tone_dimension=${toneDimension}&days=${days}`);
+                if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
+                const data = await response.json();
+                renderTopAgentsTable(data, containerId);
+            } catch (err) {
+                displayError(containerId, err);
+            }
+        }
+
+        function renderTopAgentsTable(data, containerId) {
+            const container = document.getElementById(containerId);
+             if (!data || data.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No top agents data found for this tone/period.</p>';
+                return;
+            }
+            let tableHtml = '<table class="data-table"><thead><tr><th>Agent ID</th><th>Routing Count</th><th>Avg. Resonance Score</th></tr></thead><tbody>';
+            data.forEach(item => {
+                tableHtml += `<tr><td>${item.agent_id}</td><td>${item.routing_count}</td><td>${item.average_resonance_score.toFixed(3)}</td></tr>`;
+            });
+            tableHtml += '</tbody></table>';
+            container.innerHTML = tableHtml;
+        }
+
+        // --- Dissonance Spike Alerts ---
+        async function fetchAndDisplayAlertsData() {
+            const days = document.getElementById('alertsDays').value;
+            const threshold = document.getElementById('alertsThreshold').value;
+            const containerId = 'alertsDataContainer';
+            document.getElementById(containerId).innerHTML = '<p class="text-purple-300">Loading alerts data...</p>';
+            try {
+                const response = await fetch(`${BASE_FUNC_URL}/get_dissonance_spike_alerts?days=${days}&alignment_threshold=${threshold}`);
+                if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
+                const data = await response.json();
+                renderAlertsList(data, containerId);
+            } catch (err) {
+                displayError(containerId, err);
+            }
+        }
+
+        function renderAlertsList(data, containerId) {
+            const container = document.getElementById(containerId);
+            if (!data || data.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No dissonance alerts found for this period/threshold.</p>';
+                return;
+            }
+            // More detailed table for alerts
+            let tableHtml = '<table class="data-table"><thead><tr><th>Date</th><th>Agent ID</th><th>Input Text (Snippet)</th><th>MCP Status</th><th>Align. Score</th><th>User Feedback</th><th>Warnings</th></tr></thead><tbody>';
+            data.forEach(item => {
+                tableHtml += `<tr>
+                    <td>${new Date(item.created_at).toLocaleString()}</td>
+                    <td>${item.routed_agent_id || 'N/A'}</td>
+                    <td class="whitespace-normal max-w-xs truncate" title="${item.input_text}">${item.input_text ? item.input_text.substring(0, 50) + (item.input_text.length > 50 ? '...' : '') : 'N/A'}</td>
+                    <td>${item.mcp_status || 'N/A'}</td>
+                    <td>${item.filter_alignment_score !== null ? item.filter_alignment_score.toFixed(3) : 'N/A'}</td>
+                    <td>${item.user_feedback_score !== null ? (item.user_feedback_score === 1 ? '👍' : (item.user_feedback_score === -1 ? '👎' : 'N/A')) : 'N/A'}</td>
+                    <td class="whitespace-normal max-w-xs">${(item.filter_warnings || []).join(', ') || 'None'}</td>
+                </tr>`;
+            });
+            tableHtml += '</tbody></table>';
+            container.innerHTML = tableHtml;
+        }
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('loadResonanceData').addEventListener('click', fetchAndDisplayResonanceData);
+            document.getElementById('loadHeatmapData').addEventListener('click', fetchAndDisplayHeatmapData);
+            document.getElementById('loadTopAgentsData').addEventListener('click', fetchAndDisplayTopAgentsData);
+            document.getElementById('loadAlertsData').addEventListener('click', fetchAndDisplayAlertsData);
+
+            // Optionally auto-load some data
+            // fetchAndDisplayResonanceData();
+            // fetchAndDisplayHeatmapData();
+        });
+    </script>
+</body>
+</html>

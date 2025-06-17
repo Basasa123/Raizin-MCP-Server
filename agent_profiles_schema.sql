@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
 
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT now()
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    current_affinity_scores JSONB NULL -- Added in Phase 5
 );
 
 -- Optional: Index on is_active for quickly fetching active profiles
@@ -24,6 +25,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_profiles_is_active ON agent_profiles(is_act
 
 -- Comment explaining the table's purpose
 COMMENT ON TABLE agent_profiles IS 'Stores configuration and frequency profiles for all Harmonic Agents in the Raizin Vault system.';
+COMMENT ON COLUMN agent_profiles.current_affinity_scores IS 'Dynamically adjusted scores representing the agent''s current affinity/effectiveness with different tones/frequencies.';
+
 
 -- Seed data for the Clarity Agent
 INSERT INTO agent_profiles (
@@ -33,7 +36,8 @@ INSERT INTO agent_profiles (
     frequency_profile,
     keywords,
     invocation_url,
-    is_active
+    is_active,
+    current_affinity_scores -- Added column
 ) VALUES (
     'clarity_pulse_v1_001',
     'Instant Clarity Agent',
@@ -47,12 +51,25 @@ INSERT INTO agent_profiles (
         "urgency": 0.7
     }',
     ARRAY['what is', 'explain', 'define', 'how to', 'faq'],
-    'clarity_agent_v1', -- This should match the function name for Supabase, or be the full URL.
-                        -- MCP will need to know how to construct the full URL if only function name is given.
-                        -- For now, MCP's CLARITY_AGENT_URL env var is separate.
-                        -- This field provides a more generic way if we have many agents.
-    TRUE
-) ON CONFLICT (agent_id) DO NOTHING; -- Avoid error if script is run multiple times
+    'clarity_agent_v1',
+    TRUE,
+    '{ -- Added value, mirroring frequency_profile
+        "trust": 0.8,
+        "innovation": 0.3,
+        "sovereignty": 0.6,
+        "clarity": 0.95,
+        "empathy": 0.2,
+        "urgency": 0.7
+    }'
+) ON CONFLICT (agent_id) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    frequency_profile = EXCLUDED.frequency_profile,
+    keywords = EXCLUDED.keywords,
+    invocation_url = EXCLUDED.invocation_url,
+    is_active = EXCLUDED.is_active,
+    updated_at = now(), -- Update timestamp on conflict
+    current_affinity_scores = EXCLUDED.current_affinity_scores;
 
 -- Seed data for the Innovation Pulse Agent
 INSERT INTO agent_profiles (
@@ -62,7 +79,8 @@ INSERT INTO agent_profiles (
     frequency_profile,
     keywords,
     invocation_url,
-    is_active
+    is_active,
+    current_affinity_scores -- Added column
 ) VALUES (
     'innovation_pulse_v1_001',
     'Innovation Pulse Agent',
@@ -76,7 +94,23 @@ INSERT INTO agent_profiles (
         "urgency": 0.1
     }',
     ARRAY['suggest', 'idea', 'ideas', 'brainstorm', 'what if', 'creative', 'novel', 'alternative'],
-    'innovation_agent_v1', -- This will be its Supabase function name
-    TRUE
-) ON CONFLICT (agent_id) DO NOTHING;
+    'innovation_agent_v1',
+    TRUE,
+    '{ -- Added value, mirroring frequency_profile
+        "innovation": 0.95,
+        "clarity": 0.55,
+        "trust": 0.5,
+        "sovereignty": 0.6,
+        "empathy": 0.2,
+        "urgency": 0.1
+    }'
+) ON CONFLICT (agent_id) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    frequency_profile = EXCLUDED.frequency_profile,
+    keywords = EXCLUDED.keywords,
+    invocation_url = EXCLUDED.invocation_url,
+    is_active = EXCLUDED.is_active,
+    updated_at = now(), -- Update timestamp on conflict
+    current_affinity_scores = EXCLUDED.current_affinity_scores;
 ```

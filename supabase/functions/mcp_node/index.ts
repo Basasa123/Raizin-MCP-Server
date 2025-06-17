@@ -4,21 +4,19 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
-console.log(`MCP Node function booting up... v6 (innovation routing & filter orchestration)`);
+console.log(`MCP Node function booting up... v7 (Phase 5 TMG logging)`);
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-const resonatorFilterUrl = Deno.env.get('RESONATOR_FILTER_URL'); // For calling the filter
+const resonatorFilterUrl = Deno.env.get('RESONATOR_FILTER_URL');
 
 if (!supabaseUrl || !supabaseAnonKey) console.error('MCP: Missing SUPABASE_URL or SUPABASE_ANON_KEY');
 if (!resonatorFilterUrl) console.warn('MCP: Missing RESONATOR_FILTER_URL. Responses will not be filtered.');
 
-
-let cachedAgentProfiles: Record<string, any> | null = null;
-let cacheTimestamp = 0;
-const CACHE_TTL = 5 * 60 * 1000;
-
-async function getAgentProfiles(supabase: SupabaseClient | null): Promise<Record<string, any>> { /* ... same as before ... */
+let cachedAgentProfiles: Record<string, any> | null = null; /* ... same ... */
+let cacheTimestamp = 0;  /* ... same ... */
+const CACHE_TTL = 5 * 60 * 1000;  /* ... same ... */
+async function getAgentProfiles(supabase: SupabaseClient | null): Promise<Record<string, any>> { /* ... same ... */
     const now = Date.now();
     if (cachedAgentProfiles && (now - cacheTimestamp < CACHE_TTL)) return cachedAgentProfiles;
     if (!supabase) return {};
@@ -35,57 +33,53 @@ async function getAgentProfiles(supabase: SupabaseClient | null): Promise<Record
     } catch (e) { console.error("MCP: Exception during getAgentProfiles:", e); return cachedAgentProfiles || {}; }
 }
 
-interface InputSignal { /* ... same as before ... */
+interface InputSignal { /* ... same ... */
   inputText: string;
   desiredFrequency?: { clarity?: number; innovation?: number; [key: string]: number | undefined; };
   sessionId?: string;
   source?: string;
 }
-// Interface for the raw response from an agent (before filter)
-interface RawAgentResponse {
+interface RawAgentResponse { /* ... same ... */
     status: string;
     agent_id: string;
     response_text: string;
     confidence_score: number;
     kb_article_slug?: string | null;
-    pre_filter_response?: string | null; // Agent might provide this if it has internal pre-processing
+    pre_filter_response?: string | null;
     pre_filter_confidence?: number | null;
     llm_metadata?: any;
-     // filter_alignment_score and filter_warnings are NOT expected from raw agent response
 }
-// Includes fields agent might return, and fields MCP adds after filtering
-interface FinalAgentResponseDetails {
-    status: string; // from agent
+interface FinalAgentResponseDetails { /* ... same ... */
+    status: string;
     agent_id: string;
-    response_text: string; // This will be *after* resonator filter
-    confidence_score: number; // Agent's initial confidence, potentially adjusted by filter score
+    response_text: string;
+    confidence_score: number;
     kb_article_slug?: string | null;
-    pre_filter_response?: string | null; // Agent's response *before* filter
-    pre_filter_confidence?: number | null; // Agent's confidence *before* filter
-    filter_alignment_score?: number | null; // From filter
-    filter_warnings?: string[] | null; // From filter
+    pre_filter_response?: string | null;
+    pre_filter_confidence?: number | null;
+    filter_alignment_score?: number | null;
+    filter_warnings?: string[] | null;
+    filter_value_alignment_details?: { [key: string]: number } | null; // Added
     llm_metadata?: any;
 }
-interface McpResponse { /* ... same as before ... */
+interface McpResponse { /* ... same ... */
     status: string;
     interaction_id?: string;
     reason?: string;
     resolution?: string;
-    agent_id?: string; // ID of the agent chosen
-    agent_response?: FinalAgentResponseDetails | null; // The final, possibly filtered, response
+    agent_id?: string;
+    agent_response?: FinalAgentResponseDetails | null;
 }
-interface ResonatorFilterResponse { // Expected from resonator_filter function
+interface ResonatorFilterResponse { /* ... same ... */
   filtered_text: string;
   alignment_score: number;
   warnings: string[];
-  // other fields from filter if needed
+  value_alignment: { trust: number; innovation: number; sovereignty: number; [key: string]: number; }; // Ensure this is part of the interface
 }
 
-
-async function logInteraction(supabase: SupabaseClient | null, logData: any): Promise<string | null> { /* ... same as before ... */
+async function logInteraction(supabase: SupabaseClient | null, logData: any): Promise<string | null> { /* ... same ... */
     if (!supabase) { console.warn("MCP: Supabase client not initialized, skipping log."); return null; }
     try {
-        // Ensure numeric fields are numbers
         if (logData.agent_confidence_score) logData.agent_confidence_score = parseFloat(logData.agent_confidence_score);
         if (logData.pre_filter_confidence) logData.pre_filter_confidence = parseFloat(logData.pre_filter_confidence);
         if (logData.filter_alignment_score) logData.filter_alignment_score = parseFloat(logData.filter_alignment_score);
@@ -107,24 +101,24 @@ serve(async (req: Request) => {
   let inputText = "";
   let sessionId: string | undefined;
   let source: string | undefined;
+  let desiredFrequency_from_input: any = null; // To store for logging
   let routedAgentId: string | null = null;
   let finalAgentResponseDetails: FinalAgentResponseDetails | null = null;
 
   let log_interaction_id: string | null = null;
   let log_mcp_status: string = "";
   let log_mcp_reason: string | undefined;
-  // Log fields will now be populated from finalAgentResponseDetails where applicable
 
   try {
     const requestBody: InputSignal = await req.json();
     inputText = requestBody.inputText;
     sessionId = requestBody.sessionId;
     source = requestBody.source || (req.headers.get('user-agent')?.includes('Mozilla') ? 'prototype_ui' : 'api_call');
-    const { desiredFrequency } = requestBody;
+    desiredFrequency_from_input = requestBody.desiredFrequency; // Capture for logging
 
-    console.log('MCP Node (innovation routing) received input:', { inputText });
+    console.log('MCP Node (TMG logging) received input:', { inputText, desiredFrequency_from_input });
 
-    // Dissonance Detection
+    // Dissonance Detection ( ... same ... )
     if (!inputText || inputText.trim().split(/\s+/).length < 3) {
       log_mcp_status = "dissonance_detected"; log_mcp_reason = "Input too short";
       mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Please provide more details." };
@@ -134,83 +128,67 @@ serve(async (req: Request) => {
         log_mcp_status = "dissonance_detected"; log_mcp_reason = "Potential negative sentiment";
         mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason, resolution: "Could you please rephrase or provide more context?" };
       } else {
-        // Agent Routing Logic
+        // Agent Routing Logic ( ... same ... )
         let targetAgentProfile: any = null;
         const innovationAgentProfile = AGENT_PROFILES["innovation_pulse_v1_001"];
         const clarityAgentProfile = AGENT_PROFILES["clarity_pulse_v1_001"];
-
-        // Priority to Innovation Agent if keywords/frequency match
         if (innovationAgentProfile) {
             const innovationKeywords = innovationAgentProfile.keywords || [];
-            const wantsInnovation = (desiredFrequency?.innovation && desiredFrequency.innovation > 0.7) ||
+            const wantsInnovation = (desiredFrequency_from_input?.innovation && desiredFrequency_from_input.innovation > 0.7) ||
                                    innovationKeywords.some((kw:string) => inputText.toLowerCase().includes(kw));
-            if (wantsInnovation) {
-                targetAgentProfile = innovationAgentProfile;
-                console.log("MCP: Routing to Innovation Agent");
-            }
+            if (wantsInnovation) targetAgentProfile = innovationAgentProfile;
         }
-
-        // If not routed to Innovation, check Clarity Agent
         if (!targetAgentProfile && clarityAgentProfile) {
             const clarityKeywords = clarityAgentProfile.keywords || [];
-            const wantsClarity = (desiredFrequency?.clarity && desiredFrequency.clarity > 0.7) ||
+            const wantsClarity = (desiredFrequency_from_input?.clarity && desiredFrequency_from_input.clarity > 0.7) ||
                                  clarityKeywords.some((kw:string) => inputText.toLowerCase().includes(kw));
-            if (wantsClarity) {
-                targetAgentProfile = clarityAgentProfile;
-                console.log("MCP: Routing to Clarity Agent");
-            }
+            if (wantsClarity) targetAgentProfile = clarityAgentProfile;
         }
-
+        // ( ... rest of routing logic up to agent call ... )
         if (targetAgentProfile) {
           routedAgentId = targetAgentProfile.agent_id;
-          const transformedInputForAgent = { originalText: inputText, desiredFrequency, sessionId, source };
+          const transformedInputForAgent = { originalText: inputText, desiredFrequency: desiredFrequency_from_input, sessionId, source };
           const invocationUrlFromProfile = targetAgentProfile.invocation_url;
 
-          if (!invocationUrlFromProfile || !supabaseUrl) {
+          if (!invocationUrlFromProfile || !supabaseUrl) { /* ... error handling ... */
             log_mcp_status = "routing_error";
             log_mcp_reason = !invocationUrlFromProfile ? `Agent ${routedAgentId} profile missing invocation_url.` : `MCP misconfig: SUPABASE_URL not set.`;
             mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
           } else {
             const fullAgentUrl = `${supabaseUrl}/functions/v1/${invocationUrlFromProfile}`;
-            console.log(`MCP: Calling Agent ${routedAgentId} at: ${fullAgentUrl}`);
             let agentRawResponse: RawAgentResponse | null = null;
             try {
-              const agentCall = await fetch(fullAgentUrl, {
+              const agentCall = await fetch(fullAgentUrl, { /* ... */
                 method: 'POST',
                 headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` },
                 body: JSON.stringify(transformedInputForAgent)
               });
               if (!agentCall.ok) throw new Error(`Agent ${routedAgentId} call failed: ${agentCall.status} ${await agentCall.text()}`);
               agentRawResponse = await agentCall.json() as RawAgentResponse;
-              console.log(`MCP: Agent ${routedAgentId} responded.`);
 
-              // Initialize finalAgentResponseDetails with agent's raw response structure
-              // The agent provides pre_filter_response and pre_filter_confidence directly
               finalAgentResponseDetails = {
-                status: agentRawResponse.status,
-                agent_id: agentRawResponse.agent_id,
-                response_text: agentRawResponse.response_text, // This is pre-filter text initially
+                status: agentRawResponse.status, agent_id: agentRawResponse.agent_id,
+                response_text: agentRawResponse.response_text,
                 confidence_score: agentRawResponse.confidence_score,
                 kb_article_slug: agentRawResponse.kb_article_slug,
                 pre_filter_response: agentRawResponse.pre_filter_response || agentRawResponse.response_text,
                 pre_filter_confidence: agentRawResponse.pre_filter_confidence || agentRawResponse.confidence_score,
                 llm_metadata: agentRawResponse.llm_metadata,
-                filter_alignment_score: null, // Will be set by filter
-                filter_warnings: [] // Will be set by filter
+                filter_alignment_score: null, filter_warnings: [], filter_value_alignment_details: null // Initialize filter fields
               };
 
-              // Call Resonator Filter
               if (resonatorFilterUrl && finalAgentResponseDetails) {
-                console.log(`MCP: Calling Resonator Filter for agent ${routedAgentId} response.`);
+                console.log(`MCP: Calling Resonator Filter for agent ${routedAgentId}.`);
                 try {
+                  const filterCallBody = {
+                      text_content: finalAgentResponseDetails.pre_filter_response,
+                      source_agent_id: routedAgentId,
+                      target_frequency_profile: targetAgentProfile.frequency_profile
+                  };
                   const filterCall = await fetch(resonatorFilterUrl, {
                     method: 'POST',
                     headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}`},
-                    body: JSON.stringify({
-                      text_content: finalAgentResponseDetails.pre_filter_response, // Send agent's raw/pre-filter text
-                      source_agent_id: routedAgentId,
-                      target_frequency_profile: targetAgentProfile.frequency_profile
-                    })
+                    body: JSON.stringify(filterCallBody)
                   });
                   if (!filterCall.ok) throw new Error(`Resonator Filter call failed: ${filterCall.status} ${await filterCall.text()}`);
                   const filterData: ResonatorFilterResponse = await filterCall.json();
@@ -219,30 +197,29 @@ serve(async (req: Request) => {
                   finalAgentResponseDetails.response_text = filterData.filtered_text;
                   finalAgentResponseDetails.filter_alignment_score = filterData.alignment_score;
                   finalAgentResponseDetails.filter_warnings = filterData.warnings;
+                  finalAgentResponseDetails.filter_value_alignment_details = filterData.value_alignment; // Capture this
                   finalAgentResponseDetails.confidence_score = parseFloat(( (finalAgentResponseDetails.pre_filter_confidence || 0.5) * filterData.alignment_score).toFixed(3) );
-                } catch (filterError) {
+                } catch (filterError) { /* ... filter error handling ... */
                   console.error(`MCP: Error calling Resonator Filter for agent ${routedAgentId}:`, filterError);
                   if (finalAgentResponseDetails) {
                      finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter call failed."];
                   }
                 }
-              } else {
+              } else { /* ... filter skipped handling ... */
                  console.warn(`MCP: Resonator Filter URL not configured or no agent response. Skipping filter for agent ${routedAgentId}.`);
                  if (finalAgentResponseDetails) {
                     finalAgentResponseDetails.filter_warnings = [...(finalAgentResponseDetails.filter_warnings || []), "Resonator Filter skipped."];
                  }
               }
-
               log_mcp_status = "routed_and_executed";
               mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, agent_response: finalAgentResponseDetails };
-
-            } catch (agentError) {
+            } catch (agentError) { /* ... agent error handling ... */
               console.error(`MCP: Error processing agent ${routedAgentId}:`, agentError);
               log_mcp_status = "routing_error"; log_mcp_reason = `Agent ${routedAgentId} processing failed: ${agentError.message}`;
               mcpFinalResponse = { status: log_mcp_status, agent_id: routedAgentId, reason: log_mcp_reason };
             }
           }
-        } else {
+        } else { /* ... no route found handling ... */
           log_mcp_status = "no_route_found"; log_mcp_reason = "No suitable agent for input.";
           mcpFinalResponse = { status: log_mcp_status, reason: log_mcp_reason };
         }
@@ -250,8 +227,10 @@ serve(async (req: Request) => {
     }
 
     const logEntry = {
-        session_id: sessionId, input_text: inputText, mcp_status: log_mcp_status, mcp_reason: log_mcp_reason,
-        routed_agent_id: routedAgentId, // Use the one from routing decision
+        session_id: sessionId, input_text: inputText,
+        input_desired_frequency_profile: desiredFrequency_from_input, // Log this
+        mcp_status: log_mcp_status, mcp_reason: log_mcp_reason,
+        routed_agent_id: routedAgentId,
         agent_response_text: finalAgentResponseDetails?.response_text,
         agent_confidence_score: finalAgentResponseDetails?.confidence_score,
         kb_article_slug: finalAgentResponseDetails?.kb_article_slug,
@@ -259,6 +238,7 @@ serve(async (req: Request) => {
         pre_filter_confidence: finalAgentResponseDetails?.pre_filter_confidence,
         filter_alignment_score: finalAgentResponseDetails?.filter_alignment_score,
         filter_warnings: finalAgentResponseDetails?.filter_warnings,
+        filter_value_alignment_details: finalAgentResponseDetails?.filter_value_alignment_details, // Log this
         raw_mcp_response: { ...mcpFinalResponse, agent_response: undefined },
         raw_agent_response: finalAgentResponseDetails,
         llm_metadata: finalAgentResponseDetails?.llm_metadata,
@@ -268,12 +248,14 @@ serve(async (req: Request) => {
     if (log_interaction_id) mcpFinalResponse.interaction_id = log_interaction_id;
 
     return new Response( JSON.stringify(mcpFinalResponse), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  } catch (error) {
+  } catch (error) { /* ... same error handling ... */
     console.error('MCP: Critical Error:', error);
     const errorResponse = { status: "error", message: error.message };
     const errorLogEntry = {
-        session_id: sessionId, input_text: inputText, mcp_status: "error", mcp_reason: error.message,
-        raw_mcp_response: errorResponse, source: source // Ensure all potential fields for logEntry are defined or null
+        session_id: sessionId, input_text: inputText,
+        input_desired_frequency_profile: desiredFrequency_from_input, // Also log on error if available
+        mcp_status: "error", mcp_reason: error.message,
+        raw_mcp_response: errorResponse, source: source
      };
     logInteraction(supabase, errorLogEntry).catch(logError => console.error("MCP: Failed to log critical error:", logError));
     return new Response( JSON.stringify(errorResponse), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 });
