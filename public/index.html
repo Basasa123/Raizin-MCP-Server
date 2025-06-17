@@ -5,15 +5,62 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Raizin Vault - Frequency Interface Prototype</title>
     <link href="styles/output.css" rel="stylesheet">
+    <style>
+        .feedback-button {
+            transition: transform 0.1s ease-in-out;
+        }
+        .feedback-button:hover {
+            transform: scale(1.1);
+        }
+        .feedback-button:active {
+            transform: scale(0.95);
+        }
+        .feedback-button.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
     <script>
-        // URL for the deployed MCP Node function
-        // For local Supabase CLI: 'http://localhost:54321/functions/v1/mcp_node'
-        // For deployed: '[YOUR_SUPABASE_PROJECT_URL]/functions/v1/mcp_node'
-        // Using a relative path assuming deployed to the same Supabase project.
         const MCP_NODE_URL = '/functions/v1/mcp_node';
-        // This might need to be configured if your project URL is different
-        // or if you are running locally and your page isn't served by Supabase.
-        // For development, you might replace this with the full localhost URL.
+        const LOG_FEEDBACK_URL = '/functions/v1/log_user_feedback';
+        let currentInteractionId = null;
+
+        async function handleFeedback(score) {
+            if (!currentInteractionId) {
+                console.error("No interaction_id available to send feedback.");
+                return;
+            }
+
+            const feedbackButtons = document.querySelectorAll('.feedback-button');
+            feedbackButtons.forEach(btn => btn.classList.add('disabled'));
+
+            const feedbackStatus = document.getElementById('feedbackStatus');
+            feedbackStatus.textContent = "Sending feedback...";
+
+            try {
+                const response = await fetch(LOG_FEEDBACK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        interaction_id: currentInteractionId,
+                        feedback_score: score
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Feedback submission failed: ${response.status}`);
+                }
+                const result = await response.json();
+                console.log("Feedback response:", result);
+                feedbackStatus.textContent = "Feedback sent! Thank you.";
+                // Keep buttons disabled to prevent re-submission for this interaction
+            } catch (error) {
+                console.error("Error sending feedback:", error);
+                feedbackStatus.textContent = `Error: ${error.message}`;
+                feedbackButtons.forEach(btn => btn.classList.remove('disabled')); // Re-enable on error
+            }
+        }
 
         async function handleSubmitQuery() {
             const queryInput = document.getElementById('queryInput');
@@ -21,39 +68,43 @@
             const toneIndicator = document.getElementById('toneIndicator');
             const agentIdDisplay = document.getElementById('agentIdDisplay');
             const submitButton = document.getElementById('submitQueryButton');
+            const feedbackContainer = document.getElementById('feedbackContainer');
+            const feedbackStatus = document.getElementById('feedbackStatus');
+
+            currentInteractionId = null; // Reset for new query
+            feedbackContainer.classList.add('hidden');
+            document.querySelectorAll('.feedback-button').forEach(btn => btn.classList.remove('disabled')); // Use querySelectorAll here
+            feedbackStatus.textContent = "";
+
 
             const inputText = queryInput.value;
             responseDisplay.textContent = "Processing...";
             agentIdDisplay.textContent = "";
             submitButton.disabled = true;
-            toneIndicator.className = 'w-full h-4 bg-yellow-400 my-2 animate-pulse rounded-md'; // Processing indicator
+            toneIndicator.className = 'w-full h-4 bg-yellow-400 my-2 animate-pulse rounded-md';
 
             try {
                 const response = await fetch(MCP_NODE_URL, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        // 'Authorization': 'Bearer YOUR_SUPABASE_ANON_KEY' // Add if RLS requires auth for function access
-                    },
-                    body: JSON.stringify({
-                        inputText: inputText,
-                        source: "prototype_ui_live", // Added source
-                        // desiredFrequency: { clarity: 0.9 } // Example if sending desiredFrequency
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inputText: inputText, source: "prototype_ui_live_feedback" })
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.text();
-                    throw new Error(`MCP Node request failed with status ${response.status}: ${errorData}`);
+                    const errorData = await response.text(); // Use .text() for non-JSON errors too
+                    throw new Error(`MCP Node request failed: ${response.status} ${errorData}`);
                 }
 
                 const mcpResponse = await response.json();
                 console.log("Live MCP Response:", mcpResponse);
 
-                // Clear processing
                 responseDisplay.textContent = "";
                 submitButton.disabled = false;
                 toneIndicator.classList.remove('animate-pulse');
+
+                if (mcpResponse.interaction_id) {
+                    currentInteractionId = mcpResponse.interaction_id;
+                }
 
                 switch (mcpResponse.status) {
                     case "dissonance_detected":
@@ -61,24 +112,21 @@
                         toneIndicator.className = 'w-full h-4 bg-red-500 my-2 rounded-md';
                         break;
                     case "no_route_found":
-                    case "routed_not_callable": // MCP identified agent but couldn't call (e.g. URL missing)
-                    case "routing_error": // MCP tried to call agent but failed
-                        responseDisplay.textContent = `MCP: ${mcpResponse.status} (Reason: ${mcpResponse.reason || 'No specific reason provided.'})`;
-                        agentIdDisplay.textContent = mcpResponse.agent_id ? `Targeted Agent: ${mcpResponse.agent_id}` : "";
+                    case "routed_not_callable":
+                    case "routing_error":
+                        responseDisplay.textContent = `MCP: ${mcpResponse.status} (Reason: ${mcpResponse.reason || 'N/A'})`;
+                        agentIdDisplay.textContent = mcpResponse.agent_id ? `Targeted: ${mcpResponse.agent_id}` : "";
                         toneIndicator.className = 'w-full h-4 bg-gray-400 my-2 rounded-md';
                         break;
                     case "routed_and_executed":
                         if (mcpResponse.agent_response && mcpResponse.agent_id) {
-                            agentIdDisplay.textContent = `MCP routed to Agent: ${mcpResponse.agent_id}`;
-                            responseDisplay.textContent = `Agent [${mcpResponse.agent_response.agent_id}]: ${mcpResponse.agent_response.response_text} (Confidence: ${mcpResponse.agent_response.confidence_score})`;
-                            // Assuming 'clarity' for blue tone for now if clarity_pulse_v1_001 responded
-                            if (mcpResponse.agent_id === "clarity_pulse_v1_001") {
-                                toneIndicator.className = 'w-full h-4 bg-blue-500 my-2 rounded-md';
-                            } else {
-                                toneIndicator.className = 'w-full h-4 bg-green-500 my-2 rounded-md'; // Generic green for other agents
-                            }
+                            agentIdDisplay.textContent = `Agent: ${mcpResponse.agent_id}`;
+                            responseDisplay.textContent = `[${mcpResponse.agent_response.agent_id}]: ${mcpResponse.agent_response.response_text} (Conf: ${mcpResponse.agent_response.confidence_score})`;
+                            if (currentInteractionId) feedbackContainer.classList.remove('hidden'); // Show feedback buttons
+                            toneIndicator.className = mcpResponse.agent_id === "clarity_pulse_v1_001" ?
+                                'w-full h-4 bg-blue-500 my-2 rounded-md' : 'w-full h-4 bg-green-500 my-2 rounded-md';
                         } else {
-                            responseDisplay.textContent = `MCP: Routed to ${mcpResponse.agent_id}, but agent response format is unexpected.`;
+                            responseDisplay.textContent = `MCP: Routed to ${mcpResponse.agent_id}, but unexpected agent response.`;
                             toneIndicator.className = 'w-full h-4 bg-yellow-500 my-2 rounded-md';
                         }
                         break;
@@ -87,47 +135,35 @@
                          toneIndicator.className = 'w-full h-4 bg-red-700 my-2 rounded-md';
                         break;
                     default:
-                        responseDisplay.textContent = "Unknown MCP response status: " + mcpResponse.status;
+                        responseDisplay.textContent = "Unknown MCP status: " + mcpResponse.status;
                         toneIndicator.className = 'w-full h-4 bg-gray-200 my-2 rounded-md';
                 }
-
             } catch (error) {
                 console.error("Error in handleSubmitQuery:", error);
                 responseDisplay.textContent = `Error: ${error.message}`;
-                toneIndicator.className = 'w-full h-4 bg-red-700 my-2 rounded-md'; // Dark red for client-side script error
+                toneIndicator.className = 'w-full h-4 bg-red-700 my-2 rounded-md';
                 submitButton.disabled = false;
                 toneIndicator.classList.remove('animate-pulse');
             }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const submitButton = document.getElementById('submitQueryButton');
-            if(submitButton) {
-                submitButton.addEventListener('click', handleSubmitQuery);
-            }
-            // Set a default MCP_NODE_URL for local testing if not served by Supabase
-            // This is a common pattern if you're running a local dev server for the HTML page
-            // and Supabase functions are on localhost:54321
-            if (window.location.hostname === "localhost" && !MCP_NODE_URL.startsWith("http")) {
-                 // Overwrite if it seems like we are in local dev and MCP_NODE_URL is relative
-                 // You might want a more robust configuration mechanism for real apps
-                 // For example, injecting this URL via a script or using environment variables at build time
-                 // For now, this hardcoded overwrite helps for local `npx http-server public` style testing
-                 // globalThis.MCP_NODE_URL_OVERWRITTEN_FOR_LOCAL = 'http://localhost:54321/functions/v1/mcp_node';
-                 // console.warn(`MCP_NODE_URL might need to be '${globalThis.MCP_NODE_URL_OVERWRITTEN_FOR_LOCAL}' for local testing if not served via Supabase.`);
-                 // For simplicity, I will not overwrite here, but it's a common gotcha.
-                 // The user will need to ensure their Supabase CLI is running and functions are served,
-                 // and the page is either also served by Supabase or they adjust MCP_NODE_URL.
-            }
+            document.getElementById('submitQueryButton')?.addEventListener('click', handleSubmitQuery);
+
+            const thumbUpButton = document.getElementById('thumbUpButton');
+            const thumbDownButton = document.getElementById('thumbDownButton');
+            // No need for global feedbackButtons array, can select them inside handleFeedback or keep as is.
+
+            thumbUpButton?.addEventListener('click', () => handleFeedback(1));
+            thumbDownButton?.addEventListener('click', () => handleFeedback(-1));
         });
     </script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center p-4">
-
     <div class="w-full max-w-2xl bg-gray-800 p-6 rounded-lg shadow-xl">
         <header class="text-center mb-6">
             <h1 class="text-4xl font-bold text-purple-400">Raizin Vault</h1>
-            <p class="text-lg text-purple-300">Frequency Interface Prototype (Live)</p>
+            <p class="text-lg text-purple-300">Frequency Interface Prototype (Live Feedback)</p>
         </header>
 
         <div class="mb-4">
@@ -146,8 +182,15 @@
             <div id="responseDisplay" class="mt-1 p-3 bg-gray-700 rounded-md min-h-[50px] text-gray-200 whitespace-pre-wrap">
                 Awaiting query...
             </div>
+            <div id="feedbackContainer" class="mt-3 text-center hidden">
+                <span class="text-sm text-gray-400 mr-2">Rate this response:</span>
+                <button id="thumbUpButton" class="feedback-button text-2xl p-1" aria-label="Thumbs Up">👍</button>
+                <button id="thumbDownButton" class="feedback-button text-2xl p-1 ml-2" aria-label="Thumbs Down">👎</button>
+                <p id="feedbackStatus" class="text-xs text-purple-300 mt-1 h-4"></p>
+            </div>
         </div>
     </div>
-
 </body>
 </html>
+
+```
